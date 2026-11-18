@@ -3,7 +3,6 @@ import {
   OAuthAuthorizationServer,
   OAuthResourceServer,
 } from "@cloudflare/workers-oauth-provider";
-import { env } from "cloudflare:workers";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { passwordMatches, signOwnerSession, verifyOwnerSession } from "./crypto";
@@ -19,25 +18,42 @@ const OWNER_COOKIE = "wfmcp_owner";
 const OWNER_SESSION_MS = 12 * 60 * 60 * 1000;
 const SCOPES = ["shop", "offline_access"];
 
-const authorizationServer = new OAuthAuthorizationServer<Env>({
-  issuer: env.PUBLIC_URL,
-  resources: [`${env.PUBLIC_URL}/mcp`],
-  scopesSupported: SCOPES,
-  clientIdMetadataDocumentEnabled: true,
-  // Dynamic Client Registration, for MCP clients that do not support Client ID Metadata Documents yet.
-  clientRegistrationEndpoint: "/oauth/register",
-});
+/**
+ * The OAuth issuer and the MCP resource are this Worker's own origin, read from the request, so the
+ * repo holds no deployment URL. Cloudflare only routes hostnames bound to this Worker here
+ * (workers.dev, custom domains, routes), so the origin is always one of ours. Tokens are bound to
+ * the origin that issued them.
+ */
+const oauthByOrigin = new Map<
+  string,
+  { authorizationServer: OAuthAuthorizationServer<Env>; mcpResource: OAuthResourceServer<Env, OwnerProps> }
+>();
 
-const mcpResource = new OAuthResourceServer<Env, OwnerProps>({
-  resourceMetadata: {
-    resource: `${env.PUBLIC_URL}/mcp`,
-    authorization_servers: [env.PUBLIC_URL],
-    resource_name: "Whole Foods MCP",
-  },
-  requiredScopes: ["shop"],
-  validateToken: (env) => (resource, token) => authorizationServer.validateToken(resource, token, env),
-  handler: { fetch: (request, env, ctx) => mcpHandler(request, env, ctx) },
-});
+function oauthFor(origin: string) {
+  const existing = oauthByOrigin.get(origin);
+  if (existing) return existing;
+  const authorizationServer = new OAuthAuthorizationServer<Env>({
+    issuer: origin,
+    resources: [`${origin}/mcp`],
+    scopesSupported: SCOPES,
+    clientIdMetadataDocumentEnabled: true,
+    // Dynamic Client Registration, for MCP clients that do not support Client ID Metadata Documents yet.
+    clientRegistrationEndpoint: "/oauth/register",
+  });
+  const mcpResource = new OAuthResourceServer<Env, OwnerProps>({
+    resourceMetadata: {
+      resource: `${origin}/mcp`,
+      authorization_servers: [origin],
+      resource_name: "Whole Foods MCP",
+    },
+    requiredScopes: ["shop"],
+    validateToken: (env) => (resource, token) => authorizationServer.validateToken(resource, token, env),
+    handler: { fetch: (request, env, ctx) => mcpHandler(request, env, ctx) },
+  });
+  const servers = { authorizationServer, mcpResource };
+  oauthByOrigin.set(origin, servers);
+  return servers;
+}
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -75,7 +91,8 @@ app.post("/owner-login", async (c) => {
 
 app.on(["GET", "POST"], "/authorize", async (c) => {
   if (!(await isOwner(c))) return toOwnerLogin(c);
-  const oauth = authorizationServer.getOAuthApi(c.env);
+  const origin = new URL(c.req.url).origin;
+  const oauth = oauthFor(origin).authorizationServer.getOAuthApi(c.env);
   try {
     if (c.req.method === "GET") {
       const authRequest = await oauth.parseAuthRequest(c.req.raw);
@@ -96,7 +113,7 @@ app.on(["GET", "POST"], "/authorize", async (c) => {
       userId: OWNER_ID,
       metadata: {},
       scope: approved.request.scope.filter((scope) => SCOPES.includes(scope)).concat("shop"),
-      props: { userId: OWNER_ID } satisfies OwnerProps,
+      props: { userId: OWNER_ID, origin } satisfies OwnerProps,
     });
     approved.headers.set("Location", redirectTo);
     return new Response(null, { status: 302, headers: approved.headers });
@@ -136,13 +153,14 @@ app.post("/session/forget", async (c) => {
   return c.redirect("/owner-login");
 });
 
-app.get("/", (c) => c.text(`Whole Foods MCP. Connect an MCP client to ${c.env.PUBLIC_URL}/mcp`));
+app.get("/", (c) => c.text(`Whole Foods MCP. Connect an MCP client to ${new URL(c.req.url).origin}/mcp`));
 
 const OWNER_PAGES = ["/", "/owner-login", "/authorize", "/session"];
 
 export default {
   fetch(request, env, ctx) {
-    const { pathname } = new URL(request.url);
+    const { origin, pathname } = new URL(request.url);
+    const { authorizationServer, mcpResource } = oauthFor(origin);
     if (pathname === "/mcp" || pathname.startsWith("/.well-known/oauth-protected-resource")) {
       return mcpResource.fetch(request, env, ctx);
     }

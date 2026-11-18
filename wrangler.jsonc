@@ -11,14 +11,8 @@
     "bindings": [{ "name": "SHOPPER", "class_name": "Shopper" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Shopper"] }],
-  "kv_namespaces": [
-    // Create with: npx wrangler kv namespace create OAUTH_KV, then paste the id here.
-    { "binding": "OAUTH_KV", "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID" }
-  ],
-  "vars": {
-    // The public origin of this Worker, with no trailing slash.
-    "PUBLIC_URL": "https://wholefoods-mcp.YOUR_SUBDOMAIN.workers.dev"
-  }
+  // No id: wrangler creates the namespace on the first deploy and keeps it linked afterwards.
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }]
   // Secrets (npx wrangler secret put <NAME>):
   //   OWNER_PASSWORD  the password you type to approve an MCP client and to open the sign-in page
   //   SECRET_KEY      32+ random bytes, base64. Encrypts the stored Amazon cookies and signs the owner session.

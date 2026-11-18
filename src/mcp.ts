@@ -4,18 +4,20 @@ import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { NOT_SIGNED_IN } from "./amazon";
 
-export type OwnerProps = { userId: string };
+export type OwnerProps = { userId: string; origin: string };
 
 const asin = z
   .string()
   .regex(/^[A-Z0-9]{10}$/, "An ASIN is 10 uppercase letters or digits, for example B07FZ8S74R.")
   .describe("Amazon product id (ASIN) from search_products.");
 
-function shopper() {
+function owner(): OwnerProps {
   const props = getMcpAuthContext()?.props as OwnerProps | undefined;
   if (!props?.userId) throw new Error("No authenticated owner on this request.");
-  return env.SHOPPER.getByName(props.userId);
+  return props;
 }
+
+const shopper = () => env.SHOPPER.getByName(owner().userId);
 
 function json(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }] };
@@ -32,7 +34,7 @@ async function run(work: () => Promise<unknown>) {
         content: [
           {
             type: "text" as const,
-            text: `Amazon is not signed in. Ask the user to open ${env.PUBLIC_URL}/session and sign in to Amazon, then try again.`,
+            text: `Amazon is not signed in. Ask the user to open ${owner().origin}/session and sign in to Amazon, then try again.`,
           },
         ],
       };
@@ -59,7 +61,7 @@ function createServer() {
     async ({ verify }) => {
       const stub = shopper();
       const status = verify ? await stub.verifySignIn() : await stub.status();
-      return json({ ...status, signInPage: `${env.PUBLIC_URL}/session` });
+      return json({ ...status, signInPage: `${owner().origin}/session` });
     },
   );
 
@@ -146,7 +148,7 @@ function createServer() {
     },
     async () =>
       json({
-        checkoutPage: `${env.PUBLIC_URL}/session?task=checkout`,
+        checkoutPage: `${owner().origin}/session?task=checkout`,
         instructions:
           "Open the link, sign in with the server password if asked, and select Start. Pick a delivery window and place the order in the live browser.",
       }),
