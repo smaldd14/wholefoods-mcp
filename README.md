@@ -1,5 +1,7 @@
 # wholefoods-mcp
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/smaldd14/wholefoods-mcp)
+
 A remote MCP server on Cloudflare Workers that shops Whole Foods Market on Amazon for you: search products, read and change the cart, and read delivery windows. It uses [Cloudflare Browser Run](https://developers.cloudflare.com/browser-run/) to drive a real browser.
 
 It does not place orders. The `checkout` tool gives you a link where you finish checkout yourself in a live remote browser.
@@ -31,16 +33,26 @@ When a selector no longer matches Amazon's markup, a tool returns `pageText` (th
 
 Requires a Workers Paid plan for Browser Run and Durable Objects.
 
+The repo holds nothing specific to one deployment:
+
+- The `OAUTH_KV` binding has no `id`. Wrangler creates the namespace in your account on the first deploy and keeps it linked.
+- The OAuth issuer and the MCP URL are the origin each request arrives on, so a workers.dev URL and a custom domain both work with no config.
+- Secrets live in your account, never in the repo.
+
+**One click:** use the Deploy to Cloudflare button above. It copies this repo to your GitHub account, creates the resources, asks for the two secrets, and sets up Workers Builds so pushes to your copy deploy.
+
+**From a clone:**
+
 ```sh
 npm install
-npx wrangler kv namespace create OAUTH_KV     # put the id in wrangler.jsonc
-# set vars.PUBLIC_URL in wrangler.jsonc to your Worker's URL
 npx wrangler secret put OWNER_PASSWORD
 openssl rand -base64 32 | npx wrangler secret put SECRET_KEY
 npm run deploy
 ```
 
 Then open `https://<your-worker>/session`, sign in to Amazon, and add `https://<your-worker>/mcp` to your MCP client as a remote server.
+
+To use a custom domain, add a `routes` entry to `wrangler.jsonc` in your own copy, or add the domain in the dashboard under the Worker's Settings, Domains & Routes.
 
 ## Local development
 
